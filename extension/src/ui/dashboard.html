@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XInput Bridge</title>
+  <link rel="icon" href="../../icons/icon-32.png">
+  <link rel="stylesheet" href="base.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <img src="../../icons/icon-48.png" alt="" width="32" height="32">
+      <div class="title">
+        <h1>XInput Bridge</h1>
+        <p class="muted">Xbox-protocol USB controllers for Chrome on macOS</p>
+      </div>
+      <div class="pair">
+        <button id="pair" class="btn primary">Pair a controller</button>
+        <button id="pair-all" class="btn quiet small" title="List every USB device, for controllers that don't advertise the Xbox interface">Show all USB devices</button>
+      </div>
+    </header>
+
+    <p id="nousb" class="banner error" hidden>This browser has no WebUSB support, so the bridge can't run. Use Google Chrome 118 or newer.</p>
+    <p id="pair-error" class="banner error" hidden></p>
+
+    <section id="welcome" class="welcome" hidden>
+      <h2>Set up in three steps</h2>
+      <ol>
+        <li><b>Plug in</b> your controller or its USB receiver, and switch the controller on.</li>
+        <li><b>Click Pair a controller</b>, pick it in Chrome's list and click Connect. You only do this once.</li>
+        <li><b>Open your game</b> (GeForce NOW, Xbox Cloud Gaming, a browser game) and press any button. Already-open tabs need a reload first.</li>
+      </ol>
+    </section>
+
+    <section class="block">
+      <div class="block-head">
+        <h2>Controllers</h2>
+      </div>
+      <div id="devices"></div>
+    </section>
+
+    <section class="block">
+      <div class="block-head"><h2>Settings</h2></div>
+      <div class="settings">
+        <div class="setting">
+          <div class="text">
+            <label for="deadzone">Stick deadzone</label>
+            <p class="muted">Ignores small stick movement around the center, so a worn stick doesn't drift. Most games add their own, so keep it small.</p>
+          </div>
+          <div class="control range">
+            <input id="deadzone" type="range" min="0" max="0.3" step="0.01">
+            <output id="deadzone-value" class="mono"></output>
+          </div>
+        </div>
+        <div class="setting">
+          <div class="text">
+            <label for="rumble">Rumble</label>
+            <p class="muted">Lets sites that use the Gamepad vibration API shake the controller.</p>
+          </div>
+          <div class="control"><label class="switch"><input id="rumble" type="checkbox"><span></span></label></div>
+        </div>
+        <div class="setting" id="strength-row">
+          <div class="text">
+            <label for="strength">Rumble strength</label>
+          </div>
+          <div class="control range">
+            <input id="strength" type="range" min="0.1" max="1" step="0.05">
+            <output id="strength-value" class="mono"></output>
+          </div>
+        </div>
+        <div class="setting">
+          <div class="text">
+            <label for="toasts">On-page notices</label>
+            <p class="muted">Shows a short "Player 1 connected" notice in the corner of the page.</p>
+          </div>
+          <div class="control"><label class="switch"><input id="toasts" type="checkbox"><span></span></label></div>
+        </div>
+        <div class="setting">
+          <div class="text">
+            <label for="identity">Report controllers to sites as</label>
+            <p class="muted">Sites pick button labels and layouts from the controller's name. An Xbox controller is what they handle best.</p>
+          </div>
+          <div class="control">
+            <select id="identity">
+              <option value="xbox">Xbox controller</option>
+              <option value="device">Their real name</option>
+            </select>
+          </div>
+        </div>
+        <div class="setting">
+          <div class="text">
+            <span class="label-text">Turned off on</span>
+            <p class="muted">Sites where the bridge stays out of the way. Turn a site off or back on from the toolbar button.</p>
+          </div>
+          <div class="control sites" id="sites"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <details class="help">
+        <summary><h2>Troubleshooting</h2></summary>
+        <dl>
+          <dt>My controller isn't in Chrome's list</dt>
+          <dd>Check for a mode switch or button combo and pick X-input (often "X" or PC mode). If it's a plain HID gamepad, Chrome already supports it and you don't need this extension. Try <b>Show all USB devices</b> to pair a controller that doesn't advertise the Xbox interface.</dd>
+          <dt>"Another tab, extension or app is using this controller"</dt>
+          <dd>Only one program can talk to the controller at a time. Remove older controller extensions (for example an earlier GFN Controller Bridge), close pages that use it over WebUSB, then click Retry.</dd>
+          <dt>It works here but not in my game</dt>
+          <dd>Reload the game's tab, then press a button: like Chrome, the bridge only shows controllers to a page after a button press. Check that the site isn't turned off in the toolbar button.</dd>
+          <dt>Rumble does nothing</dt>
+          <dd>The site has to use the Gamepad vibration API. Use <b>Test rumble</b> above to check the controller itself.</dd>
+          <dt>Windows and Linux</dt>
+          <dd>You don't need this there: the system driver already supports these controllers, and because it holds the device, the extension can't open it.</dd>
+        </dl>
+      </details>
+    </section>
+
+    <section class="block">
+      <details id="raw-box" class="help">
+        <summary><h2>Raw USB reports</h2></summary>
+        <p class="muted raw-intro">The bytes each controller sends, for debugging or for adding support for a new controller. Press buttons one at a time and include the output in a bug report.</p>
+        <div class="raw-actions">
+          <button id="raw-toggle" class="btn small">Start capture</button>
+          <button id="raw-copy" class="btn small quiet">Copy</button>
+          <button id="raw-clear" class="btn small quiet">Clear</button>
+        </div>
+        <pre id="raw" class="mono raw"></pre>
+      </details>
+    </section>
+
+    <footer class="muted">
+      <span id="version"></span>
+      · <a href="https://github.com/boi0875/xinput-bridge" target="_blank" rel="noopener">Source and issues on GitHub</a>
+      · Nothing leaves your computer: no network requests, no analytics.
+    </footer>
+  </div>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

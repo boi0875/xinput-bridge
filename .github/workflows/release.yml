@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the manifest version
+        run: |
+          version=$(node -p "require('./extension/manifest.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match manifest.json version $version" >&2
+            exit 1
+          fi
+      - name: Zip the extension
+        run: |
+          mkdir -p dist
+          cd extension
+          zip -r "../dist/xinput-bridge-${GITHUB_REF_NAME#v}.zip" . -x '*.DS_Store' 'icons/icon.svg'
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "$GITHUB_REF_NAME" --generate-notes
