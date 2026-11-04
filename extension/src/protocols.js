@@ -170,6 +170,12 @@ class X360Driver {
     this.protocol = Protocol.X360;
     this.hotplug = false;      // the pad is present as soon as the USB device is
     this.haptics = ['dual-rumble'];
+    // Some third-party pads (GameSir, Hori and others) send no input until the
+    // host reads this vendor descriptor. Pads that don't need it may refuse it.
+    this.initControlIn = {
+      setup: { requestType: 'vendor', recipient: 'interface', request: 0x01, value: 0x0100, index: 0x00 },
+      length: 20,
+    };
   }
   initPackets() { return []; }
   // 0x06..0x09 = LED quadrant 1..4 solid on
@@ -221,9 +227,10 @@ const GIP_S_INIT = [GIP.POWER, GIP.OPT_INTERNAL, 0, 0x0f, 0x06];
 // Some Hori and PDP pads won't send stick data until their identify is acked.
 const GIP_HORI_ACK = [GIP.ACK, GIP.OPT_INTERNAL, 0, 0x09, 0x00, GIP.IDENTIFY, GIP.OPT_INTERNAL,
   0x3a, 0x00, 0x00, 0x00, 0x80, 0x00];
-// Most PDP pads need these two before they send input at all.
-const GIP_PDP_LED = [GIP.LED, GIP.OPT_INTERNAL, 0, 0x03, 0x00, 0x01, 0x14];
-const GIP_PDP_AUTH = [GIP.AUTH, GIP.OPT_INTERNAL, 0, 0x02, 0x01, 0x00];
+// PDP and other third-party pads won't send input until they get these two;
+// xpad sends them to every pad.
+const GIP_LED_ON = [GIP.LED, GIP.OPT_INTERNAL, 0, 0x03, 0x00, 0x01, 0x14];
+const GIP_AUTH_DONE = [GIP.AUTH, GIP.OPT_INTERNAL, 0, 0x02, 0x01, 0x00];
 // Some PowerA pads need a short rumble to start reporting. The second packet
 // stops it before the motors spin up.
 const GIP_RUMBLE_BEGIN = [GIP.RUMBLE, 0x00, 0, 0x09, 0x00, 0x0f, 0x00, 0x00, 0x1d, 0x1d, 0xff, 0x00, 0x00];
@@ -236,10 +243,8 @@ export const GIP_INIT_TABLE = [
   [0, 0, GIP_POWER_ON],
   [0x045e, 0x02ea, GIP_S_INIT],
   [0x045e, 0x0b00, GIP_S_INIT],
-  [0x0e6f, 0, GIP_PDP_LED],
-  [0x20d6, 0xa01a, GIP_PDP_LED],
-  [0x0e6f, 0, GIP_PDP_AUTH],
-  [0x20d6, 0xa01a, GIP_PDP_AUTH],
+  [0, 0, GIP_LED_ON],
+  [0, 0, GIP_AUTH_DONE],
   [0x24c6, 0x541a, GIP_RUMBLE_BEGIN],
   [0x24c6, 0x542a, GIP_RUMBLE_BEGIN],
   [0x24c6, 0x543a, GIP_RUMBLE_BEGIN],

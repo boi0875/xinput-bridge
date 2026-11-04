@@ -53,6 +53,7 @@ test('Xbox 360 driver: LED and rumble packets', () => {
   assert.deepEqual([...d.ledPacket(3)], [0x01, 0x03, 0x09]);
   assert.deepEqual([...d.rumblePacket({ strong: 1, weak: 0.5 })], [0x00, 0x08, 0x00, 0xff, 0x80, 0, 0, 0]);
   assert.equal(d.hotplug, false);
+  assert.deepEqual(d.initControlIn.setup, { requestType: 'vendor', recipient: 'interface', request: 1, value: 0x100, index: 0 });
 });
 
 test('Xbox 360 wireless: presence reports and offset input', () => {
@@ -98,18 +99,21 @@ test('GIP: guide button comes in its own report and needs an ack', () => {
 });
 
 test('GIP: init packets match the vendor table and carry fresh sequence numbers', () => {
+  // power on, LED on, auth done: what xpad sends every pad
   const generic = createDriver(Protocol.GIP, { vendorId: 0x1234, productId: 0x5678 }).initPackets();
-  assert.equal(generic.length, 1);
-  assert.deepEqual([...generic[0]], [0x05, 0x20, 0x01, 0x01, 0x00]);
+  assert.deepEqual(generic.map(p => [...p]), [
+    [0x05, 0x20, 0x01, 0x01, 0x00],
+    [0x0a, 0x20, 0x02, 0x03, 0x00, 0x01, 0x14],
+    [0x06, 0x20, 0x03, 0x02, 0x01, 0x00],
+  ]);
 
-  const pdp = createDriver(Protocol.GIP, { vendorId: 0x0e6f, productId: 0x02ab }).initPackets();
-  assert.deepEqual(pdp.map(p => p[0]), [0x05, 0x0a, 0x06]);
-  assert.deepEqual(pdp.map(p => p[2]), [1, 2, 3]);
+  const hori = createDriver(Protocol.GIP, { vendorId: 0x0f0d, productId: 0x0067 }).initPackets();
+  assert.deepEqual(hori.map(p => p[0]), [0x01, 0x05, 0x0a, 0x06], 'identify ack goes first');
 
   const powerA = createDriver(Protocol.GIP, { vendorId: 0x24c6, productId: 0x543a }).initPackets();
-  assert.deepEqual(powerA.map(p => p[0]), [0x05, 0x09, 0x09]);
-  assert.equal(powerA[1][8], 0x1d);
-  assert.equal(powerA[2][8], 0x00);
+  assert.deepEqual(powerA.map(p => p[0]), [0x05, 0x0a, 0x06, 0x09, 0x09]);
+  assert.equal(powerA[3][8], 0x1d, 'rumble kick');
+  assert.equal(powerA[4][8], 0x00, 'then stop');
 
   // the table itself isn't mutated by sequence numbering
   for (const [, , pkt] of GIP_INIT_TABLE) assert.equal(pkt[2], 0);

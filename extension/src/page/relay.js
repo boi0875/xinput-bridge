@@ -1,8 +1,9 @@
 // XInput Bridge: relay (the extension's isolated content script).
 //
 // Carries controller state from the service worker to main-world.js, and
-// rumble requests back. It opens a connection only once main-world.js reports
-// that the page uses the Gamepad API, and only while the site isn't disabled.
+// rumble requests back. It connects only once main-world.js reports that the
+// page uses the Gamepad API, only while the site isn't turned off, and only
+// while the page is visible or has had a button press (a game in use).
 (() => {
   'use strict';
   const TO_RELAY = 'xinput-bridge:to-relay';
@@ -16,6 +17,7 @@
   const site = topHostname();
   let settings = null;
   let interested = false;
+  let engaged = false;
   let port = null;
   let retry = 0;
   let retryTimer = 0;
@@ -40,6 +42,9 @@
     } else if (msg.t === 'interest') {
       interested = true;
       connect();
+    } else if (msg.t === 'engaged') {
+      engaged = true;
+      port?.postMessage({ t: 'engaged' });
     } else if (msg.t === 'rumble' && port) {
       const n = v => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0);
       port.postMessage({
@@ -50,7 +55,7 @@
   });
 
   function connect() {
-    if (port || !interested || !enabled()) return;
+    if (port || !interested || !enabled() || !(visible() || engaged)) return;
     if (!alive()) return giveUp();
     clearTimeout(retryTimer);
     try {
@@ -67,9 +72,11 @@
       // drop the pads if that takes too long, so a quick restart goes unnoticed.
       clearTimeout(lostTimer);
       lostTimer = setTimeout(() => setPads([]), LOST_GRACE_MS);
-      retryTimer = setTimeout(connect, Math.min(250 * 2 ** retry++, 10_000));
+      // A background tab that isn't a game in use waits until it's shown
+      // again, so it doesn't keep waking the worker.
+      if (visible() || engaged) retryTimer = setTimeout(connect, Math.min(250 * 2 ** retry++, 10_000));
     });
-    port.postMessage({ t: 'hello', visible: visible(), top: isTop });
+    port.postMessage({ t: 'hello', visible: visible(), engaged, top: isTop });
   }
 
   function disconnect() {
@@ -107,6 +114,7 @@
 
   document.addEventListener('visibilitychange', () => {
     if (port) port.postMessage({ t: 'vis', v: visible() });
+    else connect();
   });
 
   // ---------- settings ----------

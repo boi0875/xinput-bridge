@@ -86,12 +86,13 @@ USB controller ──WebUSB──▶ service worker ──port──▶ relay.js
 - The **service worker** ([`background.js`](extension/src/background.js)) opens paired controllers
   with WebUSB, decodes their reports ([`protocols.js`](extension/src/protocols.js)), applies the
   deadzone and streams state to every page that uses the Gamepad API. It releases the controllers
-  30 seconds after the last such page closes.
+  30 seconds after the last game is closed (or left in a background tab without being played), so
+  other apps can use them.
 - **[`main-world.js`](extension/src/page/main-world.js)** runs in each page. It waits until the page
   calls `navigator.getGamepads()` or listens for gamepad events, then asks the relay to connect.
-  Bridged controllers appear in `getGamepads()` at their player index as immutable snapshots, and
-  `gamepadconnected` / `gamepaddisconnected` fire as they come and go. Controllers Chrome sees on its
-  own keep working alongside them.
+  Bridged controllers appear in `getGamepads()` as immutable snapshots in the first free slots, and
+  `gamepadconnected` / `gamepaddisconnected` fire as they come and go. Controllers Chrome supports
+  on its own keep their usual index alongside them.
 - **[`relay.js`](extension/src/page/relay.js)** is the content script in Chrome's isolated world. It
   holds the connection to the service worker and passes messages through.
 
@@ -106,6 +107,7 @@ dashboard.
   gamepad events. They don't read page content, and pages that never use the Gamepad API never
   connect to the extension.
 - **Storage**: your settings, synced with your Chrome profile.
+- **Active tab**: lets the toolbar popup read the current site's name for the on/off switch.
 - **USB**: granted by you, one device at a time, through Chrome's device chooser. No manifest
   permission is involved.
 

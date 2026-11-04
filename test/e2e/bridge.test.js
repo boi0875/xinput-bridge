@@ -13,6 +13,16 @@ before(async () => {
   await serve(env.context, 'https://host.test',
     '<!doctype html><title>host</title><p>no gamepad code here</p><iframe src="https://frame.test/" width="300" height="200"></iframe>');
   await serve(env.context, 'https://plain.test', '<!doctype html><title>plain</title><p>no gamepad code here</p>');
+  // Only a bare addEventListener call, then a zone.js-style wrapper installed afterwards.
+  await serve(env.context, 'https://bare.test', `<!doctype html><title>bare</title><script>
+    'use strict';
+    window.got = [];
+    addEventListener('gamepadconnected', e => got.push(e.gamepad.index));
+    const original = EventTarget.prototype.addEventListener;
+    window.wrapped = 0;
+    EventTarget.prototype.addEventListener = function () { wrapped++; return original.apply(this, arguments); };
+    window.addEventListener('resize', () => {});
+  </script>`);
 });
 
 after(async () => { await env?.close(); });
@@ -38,6 +48,9 @@ test('wired 360 pad: hidden until a button press, then connected at index 0', as
   await sw(() => xinputBridge.attach(makeFake('x360')));
   // LED for player 1
   await waitFor(async () => (await written('x360')).some(([, b]) => b.join() === '1,3,6'), { message: 'player LED' });
+  const control = await sw(() => fakes.x360.control);
+  assert.deepEqual(control, [{ requestType: 'vendor', recipient: 'interface', request: 1, value: 256, index: 0 }],
+    'the init read some third-party pads need');
 
   // Like Chrome, nothing shows before a button press.
   await page.waitForTimeout(200);
@@ -147,9 +160,9 @@ test('cross-origin iframes get the controller too', async () => {
 
 test('Xbox One (GIP) pad: init sequence, input, guide ack, trigger rumble', async () => {
   await sw(() => xinputBridge.attach(makeFake('gip')));
-  await waitFor(async () => (await written('gip')).length >= 3, { message: 'GIP init' });
-  const init = (await written('gip')).slice(0, 3).map(([, b]) => b[0]);
-  assert.deepEqual(init, [0x05, 0x09, 0x09], 'power on, then the PowerA rumble kick');
+  await waitFor(async () => (await written('gip')).length >= 5, { message: 'GIP init' });
+  const init = (await written('gip')).slice(0, 5).map(([, b]) => b[0]);
+  assert.deepEqual(init, [0x05, 0x0a, 0x06, 0x09, 0x09], 'power on, LED, auth, then the PowerA rumble kick');
 
   await push('gip', 2, gipReport({ b4: 0x20, lt: 1023, lx: -32768 }));   // B + full LT + stick left
   const pad = await waitFor(async () => (await page.evaluate(() => snap()))[1], { message: 'GIP pad at index 1' });
@@ -236,11 +249,28 @@ test('turning the bridge off for a site disconnects its pads there', async () =>
   await waitFor(async () => (await page.evaluate(() => snap()))[0], { message: 'pads back' });
 });
 
-test('unplugging a pad fires gamepaddisconnected and frees its slot', async () => {
+test('a bare addEventListener call counts as interest, and later wrappers still see window calls', async () => {
+  const bare = await env.context.newPage();
+  await bare.goto('https://bare.test/');
+  assert.equal(await bare.evaluate(() => wrapped), 1, 'a wrapper added after ours sees window.addEventListener');
+  await push('x360', 1, x360Report({ b1: 0x10 }));
+  await waitFor(() => bare.evaluate(() => got.length > 0), { message: 'connected event on the bare page' });
+  assert.deepEqual(await bare.evaluate(() => got.sort()), [0, 1], 'both connected pads');
+  await bare.close();
+  await page.bringToFront();
+  await push('x360', 1, x360Report({}));
+});
+
+test('unplugging a pad mid-rumble stops the motors, fires gamepaddisconnected and frees its slot', async () => {
   await page.evaluate(() => { events.length = 0; });
+  page.evaluate(() => navigator.getGamepads()[0].vibrationActuator.playEffect('dual-rumble', {
+    duration: 3000, strongMagnitude: 1, weakMagnitude: 1,
+  }));
+  await waitFor(async () => (await written('x360')).at(-1)?.[1].join() === '0,8,0,255,255,0,0,0', { message: 'motors on' });
   await sw(() => fakes.x360.unplug());
   await waitFor(async () => (await page.evaluate(() => snap()))[0] === null, { message: 'slot 0 empty' });
   const events = await page.evaluate(() => events);
   assert.deepEqual(events[0], ['disconnected', 0, false]);
   assert.ok((await page.evaluate(() => snap()))[1], 'the GIP pad is still at index 1');
+  assert.equal((await written('x360')).at(-1)[1].join(), '0,8,0,0,0,0,0,0', 'motors stopped before the device closed');
 });

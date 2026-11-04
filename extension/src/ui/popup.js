@@ -75,9 +75,16 @@ $('dashboard').addEventListener('click', () => chrome.runtime.openOptionsPage())
 
 // ---------- this site ----------
 
+const tabStatus = async tab => {
+  try { return await chrome.tabs.sendMessage(tab.id, { t: 'status' }, { frameId: 0 }); } catch { return null; }
+};
+
 (async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const host = tab && hostnameOf(tab.url || '');
+  if (!tab) return;
+  // activeTab exposes the URL once the toolbar button is clicked; the page's
+  // own content script knows its hostname too.
+  const host = hostnameOf(tab.url || '') || (await tabStatus(tab))?.site;
   if (!host) return;
   const settings = await loadSettings();
   $('site-section').hidden = false;
@@ -86,8 +93,7 @@ $('dashboard').addEventListener('click', () => chrome.runtime.openOptionsPage())
   toggle.checked = !settings.disabledSites.includes(host);
 
   const checkTab = async () => {
-    let status = null;
-    try { status = await chrome.tabs.sendMessage(tab.id, { t: 'status' }, { frameId: 0 }); } catch { /* no relay */ }
+    const status = await tabStatus(tab);
     $('reload-box').hidden = !!status || !toggle.checked;
   };
   checkTab();

@@ -86,7 +86,11 @@ class Pad {
 
 async function scan() {
   if (!usb) return;
-  for (const d of await usb.getDevices()) await attach(d);
+  for (const d of await usb.getDevices()) {
+    // A device that failed earlier gets another go whenever a page asks.
+    if (devices.get(d)?.status === 'error') devices.delete(d);
+    await attach(d);
+  }
 }
 
 // usb.close() calls still in flight; open() fails if it races one.
@@ -145,6 +149,10 @@ async function attach(usbDevice, retries = 0) {
 
 function startPad(pad) {
   for (let i = 0; i < READS_IN_FLIGHT; i++) readLoop(pad);
+  const control = pad.driver.initControlIn;
+  if (control) {
+    pad.device.usb.controlTransferIn(control.setup, control.length).catch(() => { /* optional */ });
+  }
   for (const pkt of pad.driver.initPackets()) send(pad, pkt);
   if (!pad.driver.hotplug) setPresent(pad, true);
 }
@@ -175,45 +183,56 @@ function onPacket(pad, view) {
   for (const pkt of res.reply ?? []) send(pad, pkt);
   if (res.present !== undefined) setPresent(pad, res.present);
   if (res.state) {
+    pad.device.retries = 0;
     if (!pad.present) setPresent(pad, true);
-    updateState(pad, res.state);
+    if (pad.present) updateState(pad, res.state);   // not present: all player slots are taken
   }
 }
 
+// Writes go out one at a time per pad. A write the pad never acknowledges
+// mustn't hold up the ones behind it, hence the timeout.
 function send(pad, bytes) {
   if (pad.iface.epOut == null || !bytes) return Promise.resolve();
   const dev = pad.device;
   pad.outChain = pad.outChain
-    .then(() => (dev.closed ? null : dev.usb.transferOut(pad.iface.epOut, bytes)))
+    .then(() => (dev.closed ? null : withTimeout(dev.usb.transferOut(pad.iface.epOut, bytes), 1000)))
     .catch(e => { if (!dev.closed) console.warn('[XInput Bridge] write failed', e); });
   return pad.outChain;
 }
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const withTimeout = (promise, ms) => Promise.race([promise, sleep(ms)]);
 
 function fail(dev, error, stage) {
   if (dev.closed || !devices.has(dev.usb)) return;
   console.warn(`[XInput Bridge] ${dev.name}: ${stage} failed`, error);
   dev.status = 'error';
-  dev.error = describeError(error, stage);
+  dev.error = describeError(error, stage, dev);
   closeDevice(dev);
   publishDevices();
   // Transient errors (a hiccup while the pad wakes, a stall we couldn't clear)
   // usually clear up on a fresh open. Unplugging removes the device instead.
-  if (stage === 'read' && dev.retries < 3 && clients.size) {
+  // The count resets once a reopened pad sends a good report.
+  if ((stage === 'read' || dev.retries > 0) && dev.retries < 3 && holders()) {
     setTimeout(() => {
-      if (devices.get(dev.usb) !== dev || !clients.size) return;
+      if (devices.get(dev.usb) !== dev || !holders()) return;
       devices.delete(dev.usb);
       attach(dev.usb, dev.retries + 1);
     }, 1000 * (dev.retries + 1));
   }
 }
 
-function describeError(error, stage) {
+function describeError(error, stage, dev) {
   const msg = String(error?.message || error);
+  // Chrome drives some genuine Microsoft controllers itself and holds them.
+  const microsoft = dev.usb.vendorId === 0x045e
+    ? ' If this is a genuine Microsoft controller, Chrome may support it without this extension: click Forget and try it on its own.'
+    : '';
   if (/claim/i.test(msg)) {
-    return 'Another tab, extension or app is using this controller. Close it (for example an older controller extension, or a page that talks to it over WebUSB) and click Retry.';
+    return 'Another tab, extension or app is using this controller. Close it (for example an older controller extension, or a page that talks to it over WebUSB) and click Retry.' + microsoft;
   }
   if (/access denied/i.test(msg) || error?.name === 'SecurityError') {
-    return 'Chrome was denied access. macOS, another app or another browser may be holding the device. Unplug it, plug it back in and click Retry.';
+    return 'Chrome was denied access. macOS, another app or another browser may be holding the device. Unplug it, plug it back in and click Retry.' + microsoft;
   }
   if (stage === 'read') return `The controller stopped responding (${msg}).`;
   return msg;
@@ -221,11 +240,22 @@ function describeError(error, stage) {
 
 function closeDevice(dev) {
   if (dev.closed) return;
+  // Stop the motors before letting go: once `closed` is set, send() drops
+  // writes, and a pad left rumbling keeps going until it hears otherwise.
+  const stops = [];
+  for (const pad of dev.pads) {
+    const r = pad.rumble;
+    clearTimeout(r.timer);
+    r.wanted = null;
+    if (motorsOn(r.last) && pad.iface.epOut != null && dev.usb.opened) {
+      r.last = STOP;
+      stops.push(withTimeout(dev.usb.transferOut(pad.iface.epOut, pad.driver.rumblePacket(STOP)).catch(() => {}), 300));
+    }
+  }
   dev.closed = true;
   for (const pad of dev.pads) setPresent(pad, false);
   if (!dev.usb.opened) return;
-  const p = dev.usb.close().catch(() => {});
-  closing.set(dev.usb, p);
+  closing.set(dev.usb, Promise.all(stops).then(() => dev.usb.close()).catch(() => {}));
 }
 
 function closeAll() {
@@ -235,7 +265,7 @@ function closeAll() {
 }
 
 if (usb) {
-  usb.addEventListener('connect', e => { if (clients.size) attach(e.device); });
+  usb.addEventListener('connect', e => { if (holders()) attach(e.device); });
   usb.addEventListener('disconnect', e => {
     const dev = devices.get(e.device);
     if (!dev) return;
@@ -253,10 +283,12 @@ function setPresent(pad, present) {
   if (present) {
     const p = players.indexOf(null);
     if (p < 0) {
-      console.warn('[XInput Bridge] all player slots are taken; ignoring', pad.name);
+      if (!pad.warnedFull) console.warn('[XInput Bridge] all player slots are taken; ignoring', pad.name);
+      pad.warnedFull = true;
       pad.present = false;
       return;
     }
+    pad.warnedFull = false;
     players[p] = pad;
     pad.player = p;
     pad.raw = neutralState();
@@ -306,10 +338,11 @@ function stopRumble(pad) {
   const r = pad.rumble;
   clearTimeout(r.timer);
   r.owner = null;
-  if (r.last && (r.last.strong || r.last.weak || r.last.left || r.last.right)) {
-    queueRumble(pad, { strong: 0, weak: 0, left: 0, right: 0 });
-  }
+  if (motorsOn(r.last) || motorsOn(r.wanted)) queueRumble(pad, STOP);
 }
+
+const STOP = Object.freeze({ strong: 0, weak: 0, left: 0, right: 0 });
+const motorsOn = m => !!m && (m.strong > 0 || m.weak > 0 || m.left > 0 || m.right > 0);
 
 // Games may call playEffect every frame. Only the newest request matters, so
 // requests that arrive while a write is in flight replace each other.
@@ -340,6 +373,7 @@ class Client {
     this.port = port;
     this.kind = port.name;      // page | popup | dashboard
     this.visible = port.name !== 'page';
+    this.engaged = false;       // the page has seen a button press: it's a game in use
     this.top = true;
     this.raw = false;
     this.tabId = port.sender?.tab?.id ?? -1;
@@ -361,31 +395,61 @@ chrome.runtime.onConnect.addListener(port => {
     clientsChanged();
   });
   clientsChanged();
-  ready.then(scan).catch(e => console.warn('[XInput Bridge] scan failed', e)).finally(() => {
-    client.post(padsMessage());
+  ready.then(() => client.kind !== 'page' && scan()).catch(e => console.warn('[XInput Bridge] scan failed', e)).finally(() => {
     if (client.kind !== 'page') {
+      client.post(padsMessage());
       client.post(devicesMessage());
       if (!usb) client.post({ t: 'nousb' });
     }
   });
 });
 
+// Visible pages, pages in active use and the extension's own pages keep the
+// controllers open. A background tab that merely once called getGamepads()
+// doesn't, so the controller is free for other apps when no game is open.
+const holds = c => c.kind !== 'page' || c.visible || c.engaged;
+const holders = () => [...clients].filter(holds).length;
+
+// Called when a page says hello or changes visibility. Pages that hold the
+// controllers get a full snapshot, since live updates skip hidden pages.
+function pageStateChanged(client, wasHolding) {
+  const now = holds(client);
+  if (now !== wasHolding) clientsChanged();
+  const opening = now && !wasHolding ? ready.then(scan) : Promise.resolve();
+  opening.catch(e => console.warn('[XInput Bridge] scan failed', e))
+    .finally(() => { if (holds(client)) client.post(padsMessage()); });
+}
+
 // Pages (through relay.js) may only report visibility and ask for rumble;
 // device management is for the extension's own pages.
-const PAGE_MESSAGES = new Set(['hello', 'vis', 'rumble']);
+const PAGE_MESSAGES = new Set(['hello', 'vis', 'engaged', 'rumble']);
 
 function onClientMessage(client, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (client.kind === 'page' && !PAGE_MESSAGES.has(msg.t)) return;
   switch (msg.t) {
-    case 'hello':
+    case 'hello': {
+      const was = holds(client);
       client.visible = !!msg.visible;
+      client.engaged = !!msg.engaged;
       client.top = !!msg.top;
+      pageStateChanged(client, was);
       break;
+    }
     case 'vis': {
-      const was = client.visible;
+      const wasHolding = holds(client);
+      const wasVisible = client.visible;
       client.visible = !!msg.v;
-      if (client.visible && !was) client.post(padsMessage());
+      if (!client.visible) {
+        for (const pad of players) if (pad?.rumble.owner === client) stopRumble(pad);
+      }
+      if (client.visible !== wasVisible) pageStateChanged(client, wasHolding);
+      break;
+    }
+    case 'engaged': {
+      const was = holds(client);
+      client.engaged = true;
+      if (!was) clientsChanged();
       break;
     }
     case 'rumble': {
@@ -499,11 +563,12 @@ let keepAlive = 0;
 let idleTimer = 0;
 
 function clientsChanged() {
+  const n = holders();
   clearTimeout(idleTimer);
-  if (clients.size === 0) idleTimer = setTimeout(closeAll, IDLE_CLOSE_MS);
-  if (clients.size && !keepAlive) {
+  if (n === 0) idleTimer = setTimeout(closeAll, IDLE_CLOSE_MS);
+  if (n && !keepAlive) {
     keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20_000);
-  } else if (!clients.size && keepAlive) {
+  } else if (!n && keepAlive) {
     clearInterval(keepAlive);
     keepAlive = 0;
   }

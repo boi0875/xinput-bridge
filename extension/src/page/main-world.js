@@ -103,20 +103,6 @@
     return entry.snapshot;
   }
 
-  // A real pad from Chrome that has to move to another slot gets a copy with
-  // the matching index; its methods still point at the real actuator.
-  const moved = new WeakMap();
-  function reindex(g, index) {
-    const cached = moved.get(g);
-    if (cached && cached.index === index && cached.timestamp === g.timestamp) return cached;
-    const copy = freeze(setPrototypeOf({
-      id: g.id, index, connected: g.connected, mapping: g.mapping, timestamp: g.timestamp,
-      axes: g.axes, buttons: g.buttons, vibrationActuator: g.vibrationActuator,
-    }, GamepadProto));
-    moved.set(g, copy);
-    return copy;
-  }
-
   // ---------- haptics ----------
 
   function makeActuator(index, effects) {
@@ -184,15 +170,57 @@
     nativeDispatch.call(window, ev);
   }
 
+  const hidden = () => document.visibilityState === 'hidden';
   const hasGesture = (b, a) => b.some(v => v > GESTURE_THRESHOLD) || a.some(v => Math.abs(v) > GESTURE_THRESHOLD);
 
   function expose() {
     if (exposed) return;
     exposed = true;
+    post({ t: 'engaged' });
     for (const entry of pads.values()) fire('gamepadconnected', snapshotOf(entry));
   }
 
+  // ---------- slots ----------
+  // Pads Chrome drives itself keep the index Chrome gave them, so its own
+  // gamepad events stay right. Bridged pads take the lowest free index, and
+  // move (disconnect, then reconnect at a free index) if Chrome later puts
+  // one of its pads in their slot.
+
+  function nativePads() {
+    try { return Array.from(nativeGetGamepads.call(navigator) || []); } catch { return []; }
+  }
+
+  function freeIndex(native, self) {
+    const taken = new Set();
+    native.forEach((g, i) => { if (g) taken.add(i); });
+    for (const e of pads.values()) if (e !== self && e.index >= 0) taken.add(e.index);
+    let i = 0;
+    while (taken.has(i)) i++;
+    return i;
+  }
+
+  function resolveCollisions(native) {
+    for (const entry of pads.values()) {
+      if (!native[entry.index]) continue;
+      const old = makeSnapshot(entry, false);
+      entry.index = freeIndex(native, entry);
+      entry.dirty = true;
+      if (exposed) {
+        const moved = snapshotOf(entry);
+        // Not from inside getGamepads(): let the caller finish first.
+        queueMicrotask(() => {
+          fire('gamepaddisconnected', old);
+          fire('gamepadconnected', moved);
+        });
+      }
+    }
+  }
+
+  nativeAdd.call(window, 'gamepadconnected', e => { if (e.isTrusted) resolveCollisions(nativePads()); });
+
   // ---------- state from the extension ----------
+  // Pads are keyed by player number (which the controller's LED shows);
+  // `index` is their slot in getGamepads().
 
   function syncPads(list) {
     const next = new Map();
@@ -209,14 +237,18 @@
 
   function addPad(info) {
     const haptics = makeActuator(info.p, info.haptics || []);
+    const live = !hidden();
     const entry = {
-      index: info.p, id: String(info.id), haptics: (info.haptics || []).join(),
+      player: info.p, index: -1, id: String(info.id), haptics: (info.haptics || []).join(),
       actuator: haptics ? haptics.pub : null, stopHaptics: haptics ? haptics.stop : () => {},
-      buttons: info.b.slice(), axes: info.a.slice(), timestamp: now(), snapshot: null, dirty: true,
+      buttons: live ? info.b.slice() : info.b.map(() => 0),
+      axes: live ? info.a.slice() : info.a.map(() => 0),
+      timestamp: now(), snapshot: null, dirty: true,
     };
+    entry.index = freeIndex(nativePads(), entry);
     pads.set(info.p, entry);
     if (exposed) fire('gamepadconnected', snapshotOf(entry));
-    else if (hasGesture(entry.buttons, entry.axes)) expose();
+    else if (live && hasGesture(entry.buttons, entry.axes)) expose();
   }
 
   function removePad(p) {
@@ -230,6 +262,7 @@
   function updatePad(p, b, a) {
     const entry = pads.get(p);
     if (!entry || !Array.isArray(b) || !Array.isArray(a)) return;
+    if (hidden()) return;   // hidden pages see controllers at rest, like Chrome's own
     entry.buttons = b;
     entry.axes = a;
     entry.timestamp = now();
@@ -239,7 +272,7 @@
 
   // Hidden pages stop getting updates; don't leave a button held down.
   nativeAdd.call(document, 'visibilitychange', () => {
-    if (document.visibilityState !== 'hidden') return;
+    if (!hidden()) return;
     for (const entry of pads.values()) {
       entry.stopHaptics();
       if (entry.buttons.some(Boolean) || entry.axes.some(Boolean)) {
@@ -252,44 +285,33 @@
   });
 
   // ---------- navigator.getGamepads ----------
-  // Bridged pads sit at their player number (0..3). Pads Chrome sees natively
-  // keep their own index when it's free and otherwise move to the next free slot.
 
   const patched = {
     getGamepads() {
       noteInterest();
       const real = nativeGetGamepads.apply(this, arguments);
       if (!exposed || pads.size === 0) return real;
-      const out = [null, null, null, null];
-      for (const [p, entry] of pads) {
-        while (out.length <= p) out.push(null);
-        out[p] = snapshotOf(entry);
-      }
-      for (const g of real) {
-        if (!g) continue;
-        let i = g.index;
-        if (out[i] === undefined) while (out.length <= i) out.push(null);
-        if (out[i] !== null) {
-          i = out.indexOf(null);
-          if (i < 0) i = out.length;
-        }
-        out[i] = i === g.index ? g : reindex(g, i);
+      const out = Array.from(real);
+      resolveCollisions(out);
+      for (const entry of pads.values()) {
+        while (out.length <= entry.index) out.push(null);
+        out[entry.index] = snapshotOf(entry);
       }
       return out;
     },
   };
   Navigator.prototype.getGamepads = patched.getGamepads;
 
-  // Interest via event listeners and on* handlers, on window only.
+  // Interest via event listeners: wrap the prototype method in place, so
+  // libraries that wrap it later (zone.js, error trackers) still see every
+  // call. A bare addEventListener(...) call arrives with `this` undefined.
   const patchedAdd = {
     addEventListener(type) {
-      if (this === window && typeof type === 'string' && type.startsWith('gamepad')) noteInterest();
+      if ((this == null || this === window) && typeof type === 'string' && type.startsWith('gamepad')) noteInterest();
       return nativeAdd.apply(this, arguments);
     },
   };
-  defineProperty(window, 'addEventListener', {
-    value: patchedAdd.addEventListener, writable: true, configurable: true, enumerable: true,
-  });
+  EventTarget.prototype.addEventListener = patchedAdd.addEventListener;
   for (const name of ['ongamepadconnected', 'ongamepaddisconnected']) {
     const d = Object.getOwnPropertyDescriptor(window, name);
     if (!d || !d.set || !d.configurable) continue;

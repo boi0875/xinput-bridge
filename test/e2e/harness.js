@@ -74,6 +74,7 @@ const FAKE_USB = `(() => {
       this.queues = new Map();     // endpoint -> pending reports
       this.waiters = new Map();    // endpoint -> pending transferIn calls
       this.out = [];               // [endpoint, bytes] written by the bridge
+      this.control = [];           // control transfers the bridge made
     }
     async open() { if (this.gone) throw new DOMException('Device unavailable', 'NotFoundError'); this.opened = true; }
     async close() { this.opened = false; this.claimed.clear(); this.flush(new DOMException('Device closed', 'InvalidStateError')); }
@@ -81,6 +82,10 @@ const FAKE_USB = `(() => {
     async claimInterface(n) { if (!this.opened) throw new DOMException('closed', 'InvalidStateError'); this.claimed.add(n); }
     async selectAlternateInterface() {}
     async clearHalt() {}
+    async controlTransferIn(setup, length) {
+      this.control.push(setup);
+      return { status: 'ok', data: new DataView(new ArrayBuffer(length)) };
+    }
     async forget() { this.gone = true; }
     transferIn(ep) {
       const q = this.queues.get(ep);
