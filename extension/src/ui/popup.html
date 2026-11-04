@@ -6,34 +6,39 @@
   <link rel="stylesheet" href="base.css">
   <style>
     body { width: 340px; }
-    header { display: flex; align-items: center; gap: 10px; padding: 14px 16px 12px; }
-    header img { width: 22px; height: 22px; }
-    header h1 { font-size: 14px; font-weight: 600; flex: 1; }
-    section { padding: 12px 16px; border-top: 1px solid var(--line); }
-    .label { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
-    .row { display: flex; align-items: center; gap: 10px; min-height: 40px; }
-    .row + .row { border-top: 1px solid #1f2328; }
+    header { display: flex; align-items: center; gap: 12px; padding: 16px 16px 12px; }
+    header img { width: 20px; height: 20px; }
+    header h1 { font-size: 15px; font-weight: 500; flex: 1; }
+    section { padding: 12px 16px 16px; border-top: 1px solid var(--line); }
+    .row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 4px 0; }
+    .row + .row { border-top: 1px solid var(--line); }
     .row .main { flex: 1; min-width: 0; }
     .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .row .sub { font-size: 12px; color: var(--muted); }
-    .row .err { font-size: 12px; color: var(--error); margin-top: 2px; }
-    .player { font-variant-numeric: tabular-nums; font-weight: 600; width: 22px; color: var(--muted); }
-    .dot.live { background: #8ff0b5; box-shadow: 0 0 0 3px #1f4a30; }
-    .empty { color: var(--muted); padding: 4px 0 2px; }
-    .actions { display: flex; gap: 8px; margin-top: 12px; }
+    .row .sub { font-size: 12px; line-height: 16px; color: var(--muted); }
+    .row .err { font-size: 12px; line-height: 16px; color: var(--error); margin-top: 2px; }
+    .row .lead { width: 24px; flex: none; display: flex; justify-content: center; }
+    .player { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    /* Lights up briefly on input, like the pad's own LED. */
+    .row .dot { transition: transform 120ms var(--ease), background-color 120ms var(--ease); }
+    .row .dot.live { transform: scale(1.5); background: var(--accent-hover); }
+    .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
+    .actions { display: flex; gap: 8px; margin-top: 16px; }
+    .actions .btn { height: 36px; }
     .actions .btn.primary { flex: 1; }
     .site { display: flex; align-items: center; gap: 12px; }
-    .site .main { flex: 1; min-width: 0; }
+    .site .main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+    .site .label { font-size: 12px; line-height: 16px; color: var(--muted); }
     .site .host { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
-    .problem { color: var(--error); font-size: 12px; }
+    .note { font-size: 13px; color: var(--muted); margin-top: 12px; }
+    .problem { color: var(--error); font-size: 13px; margin-top: 12px; }
+    #reload-box .actions { margin-top: 12px; }
   </style>
 </head>
 <body>
   <header>
     <img src="../../icons/icon-48.png" alt="">
     <h1>XInput Bridge</h1>
-    <span id="count" class="chip">No controllers</span>
+    <span id="count" class="status"><span class="dot"></span><span id="count-text">No controllers</span></span>
   </header>
 
   <section>
@@ -49,7 +54,7 @@
   <section id="site-section" hidden>
     <div class="site">
       <div class="main">
-        <div class="label" style="margin:0">This site</div>
+        <div class="label">This site</div>
         <div id="host" class="host"></div>
       </div>
       <label class="switch" title="Use bridged controllers on this site">

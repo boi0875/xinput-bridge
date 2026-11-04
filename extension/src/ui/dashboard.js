@@ -69,7 +69,7 @@ function renderDevices() {
 
   if (!devices.length) {
     root.append(el('div', { class: 'empty' },
-      el('p', {}, el('b', { text: 'No controllers connected.' })),
+      el('p', {}, el('b', { text: 'No controllers connected' })),
       el('p', { text: 'Plug in a controller and click Pair a controller. Paired controllers that are plugged in show up here by themselves.' })));
     return;
   }
@@ -77,7 +77,9 @@ function renderDevices() {
   for (const dev of devices) {
     const status = deviceStatus(dev);
     const protocols = [...new Set(dev.pads.map(p => p.label))].join(', ');
-    const meta = [dev.manufacturer, `${hex4(dev.vid)}:${hex4(dev.pid)}`, protocols].filter(Boolean).join(' · ');
+    const meta = el('div', { class: 'meta' },
+      [dev.manufacturer, el('span', { class: 'mono', text: `${hex4(dev.vid)}:${hex4(dev.pid)}` }), protocols]
+        .filter(Boolean).flatMap((part, i) => (i ? [' · ', part] : [part])));
     const actions = el('div', { class: 'actions' },
       dev.status === 'error'
         ? el('button', { class: 'btn small', text: 'Retry', onclick: () => worker.post({ t: 'retry', key: dev.key }) })
@@ -89,17 +91,17 @@ function renderDevices() {
       }));
     const card = el('div', { class: 'device' },
       el('div', { class: 'device-head' },
-        el('span', { class: `dot ${status.tone}` }),
         el('div', { class: 'main' },
           el('div', { class: 'name', text: dev.name }),
-          el('div', { class: 'meta', text: meta })),
-        el('span', { class: `chip ${status.tone === 'on' ? 'on' : status.tone === 'error' ? 'error' : ''}`, text: status.text }),
+          meta),
+        el('span', { class: `status ${status.tone === 'error' ? 'error' : ''}` },
+          el('span', { class: `dot ${status.tone}` }), status.text),
         actions));
-    if (dev.error) card.append(el('p', { class: 'error-text', text: dev.error }));
+    if (dev.error) card.append(el('p', { class: 'note error', text: dev.error }));
 
     const present = dev.pads.filter(p => p.present);
     if (dev.status === 'open' && !present.length) {
-      card.append(el('p', { class: 'waiting', text: 'Receiver ready. Switch a controller on, or press its connect button, to link it.' }));
+      card.append(el('p', { class: 'note', text: 'Receiver ready. Switch a controller on, or press its connect button, to link it.' }));
     }
     for (const pad of present) {
       const view = padView(dev, pad);
@@ -137,10 +139,11 @@ function padView(dev, pad) {
   });
   if (!settings.rumble) rumble.disabled = true;
 
+  // The card header already names the player; a receiver also says which of its pads this is.
+  const label = dev.pads.length > 1 ? `Controller ${pad.slot + 1} · Player ${pad.player + 1}` : 'Live input';
   const node = el('div', { class: 'pad' },
     el('div', { class: 'pad-label' },
-      el('span', { class: 'player', text: `Player ${pad.player + 1}` }),
-      dev.pads.length > 1 ? el('span', { class: 'muted', text: `Controller ${pad.slot + 1} on this receiver` }) : null,
+      el('span', { text: label }),
       el('span', { class: 'spacer' }),
       rumble),
     el('div', { class: 'sticks' }, left.node, right.node, el('div', { class: 'triggers' }, lt.node, rt.node)),
@@ -158,6 +161,16 @@ function padView(dev, pad) {
   };
 }
 
+// lucide "x"
+function xIcon() {
+  const icon = svg('svg', {
+    viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5,
+    'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true',
+  });
+  icon.append(svg('path', { d: 'M18 6 6 18' }), svg('path', { d: 'm6 6 12 12' }));
+  return icon;
+}
+
 function svg(tag, attrs) {
   const node = document.createElementNS(SVG, tag);
   for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
@@ -168,7 +181,7 @@ const STICK_R = 40;
 const deadzoneRings = new Set();
 
 function stickView(label) {
-  const box = svg('svg', { viewBox: '-46 -46 92 92', 'aria-hidden': 'true' });
+  const box = svg('svg', { viewBox: '-48 -48 96 96', 'aria-hidden': 'true' });
   box.append(
     svg('circle', { class: 'ring', r: STICK_R }),
     svg('line', { class: 'cross', x1: -STICK_R, x2: STICK_R, y1: 0, y2: 0 }),
@@ -231,11 +244,12 @@ function showSettings() {
   sites.replaceChildren();
   if (!settings.disabledSites.length) sites.append(el('span', { class: 'faint', text: 'No sites' }));
   for (const host of settings.disabledSites) {
-    sites.append(el('span', { class: 'chip' }, host,
-      el('button', {
-        'aria-label': `Turn the bridge back on for ${host}`, title: 'Turn back on', text: '×',
-        onclick: () => saveSettings({ disabledSites: settings.disabledSites.filter(h => h !== host) }),
-      })));
+    const remove = el('button', {
+      'aria-label': `Turn the bridge back on for ${host}`, title: 'Turn back on',
+      onclick: () => saveSettings({ disabledSites: settings.disabledSites.filter(h => h !== host) }),
+    });
+    remove.append(xIcon());
+    sites.append(el('span', { class: 'tag' }, host, remove));
   }
 }
 

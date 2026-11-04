@@ -167,20 +167,22 @@
     const root = host.attachShadow({ mode: 'closed' });
     root.innerHTML = `
       <style>
-        .n { display:flex; align-items:center; gap:10px; padding:10px 14px 10px 12px;
-             background:#17191c; color:#eceef0; border:1px solid #2c3036; border-radius:10px;
-             font:500 13px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif;
-             box-shadow:0 6px 24px rgba(0,0,0,.35); transition:opacity .3s, transform .3s; }
-        .n.out { opacity:0; transform:translateY(6px); }
+        .n { display:flex; align-items:center; gap:12px; padding:12px 16px 12px 12px;
+             background:#171a1d; color:#e9ebee; border:1px solid rgba(233,235,238,.09); border-radius:12px;
+             font:400 13px/20px system-ui,-apple-system,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased;
+             box-shadow:0 8px 24px rgba(0,0,0,.32);
+             transition:opacity 300ms cubic-bezier(.22,1,.36,1), transform 300ms cubic-bezier(.22,1,.36,1); }
+        .n.out { opacity:0; transform:translateY(8px); }
         .dot { width:8px; height:8px; border-radius:50%; flex:none; }
-        .on { background:#3ecf7a; } .off { background:#80868f; }
-        .sub { color:#9aa1aa; font-weight:400; }
+        .on { background:#3ecf7a; } .off { background:#6b737c; }
+        b { font-weight:500; }
+        .sub { color:#98a0a9; }
       </style>
-      <div class="n out"><span class="dot"></span><span><b></b> <span class="sub"></span></span></div>`;
+      <div class="n out"><span class="dot"></span><span><b></b><span class="sub"></span></span></div>`;
     const box = root.querySelector('.n');
     root.querySelector('.dot').classList.add(joined ? 'on' : 'off');
     root.querySelector('b').textContent = `Player ${p + 1} ${joined ? 'connected' : 'disconnected'}`;
-    root.querySelector('.sub').textContent = name;
+    root.querySelector('.sub').textContent = ` \u00b7 ${name}`;
     (document.body || document.documentElement).appendChild(host);
     if (supportsPopover) { try { host.showPopover(); } catch { /* not connected yet */ } }
     requestAnimationFrame(() => requestAnimationFrame(() => box.classList.remove('out')));

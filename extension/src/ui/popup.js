@@ -21,7 +21,7 @@ function render() {
     if (dev.status === 'open' && present.length) {
       for (const pad of present) {
         rows.push(el('div', { class: 'row' },
-          el('span', { class: 'player', text: `P${pad.player + 1}` }),
+          el('span', { class: 'lead player', text: `P${pad.player + 1}`, title: `Player ${pad.player + 1}` }),
           el('div', { class: 'main' },
             el('div', { class: 'name', text: dev.pads.length > 1 ? `${dev.name} #${pad.slot + 1}` : dev.name }),
             el('div', { class: 'sub', text: PROTOCOL_LABEL[pad.protocol] })),
@@ -33,7 +33,7 @@ function render() {
         ? el('button', { class: 'btn small', text: 'Retry', onclick: () => worker.post({ t: 'retry', key: dev.key }) })
         : null;
       rows.push(el('div', { class: 'row' },
-        el('span', { class: `dot ${status.tone}` }),
+        el('span', { class: 'lead' }, el('span', { class: `dot ${status.tone}` })),
         el('div', { class: 'main' },
           el('div', { class: 'name', text: dev.name }),
           dev.status === 'error'
@@ -48,9 +48,8 @@ function render() {
     list.append(...rows);
   }
   const n = devices.reduce((sum, d) => sum + d.pads.filter(p => p.present).length, 0);
-  const count = $('count');
-  count.textContent = n ? `${n} connected` : 'No controllers';
-  count.className = n ? 'chip on' : 'chip';
+  $('count-text').textContent = n ? `${n} connected` : 'No controllers';
+  $('count').querySelector('.dot').className = n ? 'dot on' : 'dot';
 }
 
 function flash(player) {
