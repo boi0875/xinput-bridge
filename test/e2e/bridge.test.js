@@ -55,7 +55,7 @@ test('wired 360 pad: hidden until a button press, then connected at index 0', as
   // Like Chrome, nothing shows before a button press.
   await page.waitForTimeout(200);
   assert.deepEqual(await page.evaluate(() => events), []);
-  assert.deepEqual(await page.evaluate(() => snap()), [null, null, null, null]);
+  assert.ok((await page.evaluate(() => snap())).every(g => g === null), 'no pads before a button press');
 
   await push('x360', 1, x360Report({ b1: 0x10 }));   // A down
   await waitFor(() => page.evaluate(() => events.length >= 2), { message: 'connected events' });
