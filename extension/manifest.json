@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "XInput Bridge",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Use Xbox-protocol USB controllers that macOS doesn't support in Chrome: GeForce NOW, Xbox Cloud Gaming, browser games and more.",
   "minimum_chrome_version": "118",
   "icons": {

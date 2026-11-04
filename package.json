@@ -1,6 +1,6 @@
 {
   "name": "xinput-bridge",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "description": "Chrome extension that makes Xbox-protocol USB controllers work in the browser on macOS.",
   "type": "module",
